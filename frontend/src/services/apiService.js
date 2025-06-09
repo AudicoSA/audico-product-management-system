@@ -1,141 +1,261 @@
-import axios from 'axios'
+import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 30000,
+// Create axios instance with base configuration
+const apiClient = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000',
+  timeout: 120000, // 2 minutes timeout
   headers: {
     'Content-Type': 'application/json',
   },
-})
+});
 
-// Request interceptor
-api.interceptors.request.use(
+// Request interceptor for debugging
+apiClient.interceptors.request.use(
   (config) => {
-    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`)
-    return config
+    console.log('API Request:', config.method?.toUpperCase(), config.url);
+    return config;
   },
   (error) => {
-    return Promise.reject(error)
+    console.error('API Request Error:', error);
+    return Promise.reject(error);
   }
-)
+);
 
-// Response interceptor
-api.interceptors.response.use(
+// Response interceptor for error handling
+apiClient.interceptors.response.use(
   (response) => {
-    console.log(`API Response: ${response.status} ${response.config.url}`)
-    return response
+    return response;
   },
   (error) => {
-    console.error(`API Error: ${error.response?.status} ${error.config?.url}`, error.response?.data)
-    return Promise.reject(error)
+    console.error('API Error:', error.response?.status, error.config?.url, error.response?.data);
+    return Promise.reject(error);
   }
-)
+);
 
-export const apiService = {
-  // Basic API endpoints
+// API Methods Object
+const apiService = {
+  // Health check
+  healthCheck: async () => {
+    try {
+      const response = await apiClient.get('/health');
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  // Test API connection
   testConnection: async () => {
-    const response = await api.get('/api/test')
-    return response.data
+    try {
+      const response = await apiClient.get('/api/test');
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
 
-  getHealth: async () => {
-    const response = await api.get('/health')
-    return response.data
-  },
-
-  // OpenCart endpoints
+  // OpenCart methods
   testOpenCart: async () => {
-    const response = await api.get('/api/opencart/test')
-    return response.data
+    try {
+      const response = await apiClient.get('/api/opencart/test');
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
 
-  getOpenCartProducts: async (limit = 20) => {
-    const response = await api.get(`/api/opencart/products?limit=${limit}`)
-    return response.data
+  getProducts: async (limit = 20) => {
+    try {
+      const response = await apiClient.get(`/api/opencart/products?limit=${limit}`);
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
 
-  searchOpenCartProducts: async (searchTerm) => {
-    const response = await api.get(`/api/opencart/search/${encodeURIComponent(searchTerm)}`)
-    return response.data
+  searchProducts: async (searchTerm) => {
+    try {
+      const response = await apiClient.get(`/api/opencart/search/${encodeURIComponent(searchTerm)}`);
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
 
-  // PDF processing endpoints
+  // PDF processing methods
   uploadPDF: async (file, onProgress) => {
-    const formData = new FormData()
-    formData.append('file', file)
+    const formData = new FormData();
+    formData.append('file', file);
 
-    const response = await api.post('/api/pdf/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-      onUploadProgress: (progressEvent) => {
-        if (onProgress) {
-          const percentCompleted = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total
-          )
-          onProgress(percentCompleted)
-        }
-      },
-    })
-    return response.data
+    try {
+      const response = await apiClient.post('/api/pdf/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 120000, // 2 minutes
+        onUploadProgress: (progressEvent) => {
+          if (onProgress && progressEvent.total) {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            onProgress(percentCompleted);
+          }
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('PDF Upload Error:', error);
+      
+      if (error.code === 'ECONNABORTED') {
+        throw new Error('Upload timed out. The file might be too large or processing is taking longer than expected.');
+      }
+      
+      throw error;
+    }
   },
 
-  validateProducts: async (products) => {
-    const response = await api.post('/api/pdf/validate', { products })
-    return response.data
+  // Async PDF processing
+  uploadPDFAsync: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await apiClient.post('/api/pdf/upload-async', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 30000, // 30 seconds for starting the job
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Async PDF Upload Error:', error);
+      throw error;
+    }
   },
 
-  // Workflow endpoints
+  // Get processing status
+  getProcessingStatus: async (jobId) => {
+    try {
+      const response = await apiClient.get(`/api/pdf/status/${jobId}`);
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  // Simple PDF upload for testing
+  uploadPDFSimple: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await apiClient.post('/api/pdf/upload-simple', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 30000,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Simple PDF Upload Error:', error);
+      throw error;
+    }
+  },
+
+  // Workflow methods
   startWorkflow: async (file, options = {}) => {
-    const formData = new FormData()
-    formData.append('file', file)
-
+    const formData = new FormData();
+    formData.append('file', file);
+    
     // Add options to form data
     Object.keys(options).forEach(key => {
-      formData.append(key, options[key])
-    })
+      formData.append(key, String(options[key]));
+    });
 
-    const response = await api.post('/api/workflow/start', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    })
-    return response.data
+    try {
+      const response = await apiClient.post('/api/workflow/start', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 120000, // 2 minutes
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Workflow Start Error:', error);
+      throw error;
+    }
   },
 
   getWorkflowStatus: async (workflowId) => {
-    const response = await api.get(`/api/workflow/${workflowId}/status`)
-    return response.data
-  },
-
-  getWorkflowSummary: async (workflowId) => {
-    const response = await api.get(`/api/workflow/${workflowId}/summary`)
-    return response.data
+    try {
+      const response = await apiClient.get(`/api/workflow/${workflowId}/status`);
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
 
   listWorkflows: async (limit = 20) => {
-    const response = await api.get(`/api/workflow/list?limit=${limit}`)
-    return response.data
+    try {
+      const response = await apiClient.get(`/api/workflow/list?limit=${limit}`);
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
 
-  cancelWorkflow: async (workflowId) => {
-    const response = await api.post(`/api/workflow/${workflowId}/cancel`)
-    return response.data
+  // Product validation
+  validateProducts: async (products) => {
+    try {
+      const response = await apiClient.post('/api/pdf/validate', { products });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
 
-  // Comparison endpoints
+  // Product comparison
   compareProducts: async (products) => {
-    const response = await api.post('/api/comparison/compare', { products })
-    return response.data
+    try {
+      const response = await apiClient.post('/api/comparison/compare', { products });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
 
-  // Automation endpoints
+  // Automation
   createMissingProducts: async (products) => {
-    const response = await api.post('/api/automation/create_missing', { products })
-    return response.data
+    try {
+      const response = await apiClient.post('/api/automation/create_missing', { products });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
-}
+};
 
-export default api
+// Export the apiService object as default
+export default apiService;
+
+// Named exports for individual methods (for backward compatibility)
+export const {
+  healthCheck,
+  testConnection,
+  testOpenCart,
+  getProducts,
+  searchProducts,
+  uploadPDF,
+  uploadPDFAsync,
+  uploadPDFSimple,
+  getProcessingStatus,
+  startWorkflow,
+  getWorkflowStatus,
+  listWorkflows,
+  validateProducts,
+  compareProducts,
+  createMissingProducts,
+} = apiService;
+
+// Also export as named export for the context
+export { apiService };
