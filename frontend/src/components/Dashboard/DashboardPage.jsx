@@ -6,9 +6,10 @@ import StatusCard from '../common/StatusCard'
 import QuickStats from '../common/QuickStats'
 
 function DashboardPage() {
+  // FIX: Change apiService.getHealth to apiService.healthCheck
   const { data: health, isLoading: healthLoading } = useQuery({
     queryKey: ['health'],
-    queryFn: apiService.getHealth,
+    queryFn: apiService.healthCheck, // ✅ Fixed: was apiService.getHealth
     refetchInterval: 30000, // Refresh every 30 seconds
   })
 

@@ -1,14 +1,16 @@
-from flask import Flask, jsonify, request
-from flask_cors import CORS
+from flask import Flask, jsonify, request, Response, make_response
+from flask_cors import CORS, cross_origin
 import os
 import sys
 import tempfile
 import time
 import threading
 import uuid
+import json
 from datetime import datetime
 from dotenv import load_dotenv
 import requests
+import urllib.parse
 from werkzeug.utils import secure_filename
 
 # Load environment variables
@@ -18,7 +20,9 @@ load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000", "http://localhost:5173"])  # Allow React dev servers
+
+# Simple CORS configuration for development
+CORS(app, origins="*", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
 # ========== ASYNC PROCESSOR CLASS ==========
 
@@ -153,7 +157,7 @@ class AsyncProcessor:
 # ========== OPENCART CLIENT ==========
 
 class SimpleOpenCartClient:
-    """Simple OpenCart API Client"""
+    """Simple OpenCart API Client with LetsCMS support"""
 
     def __init__(self):
         self.base_url = os.getenv('OPENCART_BASE_URL', 'https://www.audicoonline.co.za')
@@ -168,7 +172,7 @@ class SimpleOpenCartClient:
     def test_connection(self):
         """Test API connection"""
         try:
-            url = f"{self.base_url}/index.php?route=ocrestapi/product/listing"
+            url = f"{self.base_url}/index.php?route=ocrestapi/product/listing&limit=1"
             response = requests.get(url, headers=self.headers, timeout=30)
 
             return {
@@ -190,12 +194,35 @@ class SimpleOpenCartClient:
         try:
             url = f"{self.base_url}/index.php?route=ocrestapi/product/listing&limit={limit}"
             response = requests.get(url, headers=self.headers, timeout=30)
-            return {
-                'success': response.status_code == 200,
-                'status_code': response.status_code,
-                'data': response.json() if response.content else {},
-                'url': url
-            }
+            
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    # Handle LetsCMS response structure
+                    products = []
+                    if data.get('status') and 'data' in data and 'products' in data['data']:
+                        products = data['data']['products']
+                    
+                    return {
+                        'success': True,
+                        'status_code': response.status_code,
+                        'data': {'data': products},  # Keep consistent with old format
+                        'url': url
+                    }
+                except Exception as json_error:
+                    return {
+                        'success': False,
+                        'error': f'JSON parsing failed: {str(json_error)}',
+                        'status_code': response.status_code,
+                        'url': url
+                    }
+            else:
+                return {
+                    'success': False,
+                    'error': f'HTTP {response.status_code}: {response.text[:200]}',
+                    'status_code': response.status_code,
+                    'url': url
+                }
         except Exception as e:
             return {
                 'success': False,
@@ -203,17 +230,62 @@ class SimpleOpenCartClient:
             }
 
     def search_products(self, search_term):
-        """Search products in OpenCart"""
+        """Search for products in OpenCart store"""
         try:
-            url = f"{self.base_url}/index.php?route=ocrestapi/product/listing&search={search_term}"
+            # URL encode the search term properly
+            search_term_encoded = urllib.parse.quote(search_term.lower())
+            url = f"{self.base_url}/index.php?route=ocrestapi/product/listing&search={search_term_encoded}"
+            
+            print(f"🔍 Searching with URL: {url}")
             response = requests.get(url, headers=self.headers, timeout=30)
-            return {
-                'success': response.status_code == 200,
-                'status_code': response.status_code,
-                'data': response.json() if response.content else {},
-                'url': url
-            }
+            
+            print(f"📊 Search response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    print(f"📊 API Response structure: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                    
+                    # Extract products from the correct location: data.products
+                    products = []
+                    if data.get('status') and 'data' in data and 'products' in data['data']:
+                        products = data['data']['products']
+                        print(f"📦 Found {len(products)} products for search term '{search_term}'")
+                        
+                        # Log first product for debugging
+                        if products:
+                            first_product = products[0]
+                            print(f"📦 First product: {first_product.get('name', 'No name')} (Model: {first_product.get('model', 'No model')})")
+                    else:
+                        print(f"⚠️ Unexpected response structure: {data}")
+                    
+                    return {
+                        'success': True,
+                        'status_code': response.status_code,
+                        'results': products,  # This will now contain the actual products
+                        'result_count': len(products),
+                        'url': url,
+                        'search_term': search_term
+                    }
+                    
+                except Exception as json_error:
+                    print(f"❌ JSON parsing failed: {str(json_error)}")
+                    return {
+                        'success': False,
+                        'error': f'JSON parsing failed: {str(json_error)}',
+                        'raw_content': response.text[:500],
+                        'url': url
+                    }
+            else:
+                return {
+                    'success': False,
+                    'error': f'HTTP {response.status_code}: {response.text[:200]}',
+                    'status_code': response.status_code,
+                    'url': url
+                }
+                
         except Exception as e:
+            print(f"❌ Search error: {e}")
             return {
                 'success': False,
                 'error': str(e)
@@ -231,22 +303,6 @@ try:
 except ImportError:
     workflow_manager = None
     workflow_available = False
-
-# ========== UTILITY FUNCTIONS ==========
-
-def is_valid_pdf_file(file):
-    """Check if uploaded file is a valid PDF"""
-    if not file or not file.filename:
-        return False, "No file selected"
-    
-    filename = file.filename.strip()
-    if not filename:
-        return False, "Empty filename"
-    
-    if not filename.lower().endswith('.pdf'):
-        return False, "Invalid file type. Please upload a PDF file."
-    
-    return True, "Valid PDF file"
 
 # ========== BASIC API ENDPOINTS ==========
 
@@ -316,6 +372,7 @@ def api_test():
         "GET  /api/pdf/status/<job_id> - Get processing status",
         "POST /api/pdf/validate - Validate product data",
         "POST /api/comparison/compare - Compare products",
+        "POST /api/comparison/compare-fast - Fast comparison (first 10 products)",
         "POST /api/automation/create_missing - Create missing products",
         "POST /api/workflow/start - Start complete workflow",
         "GET  /api/workflow/<id>/status - Get workflow status", 
@@ -340,6 +397,7 @@ def api_test():
 # ========== OPENCART API ENDPOINTS ==========
 
 @app.route('/api/opencart/test')
+@cross_origin()
 def opencart_test():
     """Test OpenCart API connection"""
     try:
@@ -373,6 +431,7 @@ def opencart_test():
         }), 500
 
 @app.route('/api/opencart/products')
+@cross_origin()
 def get_products():
     """Get all products from OpenCart store"""
     try:
@@ -406,14 +465,14 @@ def get_products():
         }), 500
 
 @app.route('/api/opencart/search/<search_term>')
+@cross_origin()
 def search_products(search_term):
     """Search for products in OpenCart store"""
     try:
         result = opencart_client.search_products(search_term)
 
         if result['success']:
-            data = result['data']
-            products = data.get('data', []) if isinstance(data, dict) else []
+            products = result.get('results', [])
 
             return jsonify({
                 "status": "success",
@@ -442,6 +501,7 @@ def search_products(search_term):
 # ========== PDF PROCESSING ENDPOINTS ==========
 
 @app.route('/api/pdf/upload', methods=['GET', 'POST'])
+@cross_origin()
 def upload_pdf():
     """Upload and process PDF file"""
 
@@ -470,82 +530,86 @@ def upload_pdf():
             }), 400
 
         file = request.files['file']
-        
-        # Validate file
-        is_valid, error_message = is_valid_pdf_file(file)
-        if not is_valid:
+        if file.filename == '':
             return jsonify({
-                'status': 'error',
-                'message': error_message
+                'status': 'error', 
+                'message': 'No file selected'
             }), 400
 
-        # Create temporary file
-        fd, tmp_file_path = tempfile.mkstemp(suffix='.pdf')
-        
-        try:
-            with os.fdopen(fd, 'wb') as tmp_file:
-                file.save(tmp_file)
+        if file and file.filename.lower().endswith('.pdf'):
+            # Create temporary file
+            fd, tmp_file_path = tempfile.mkstemp(suffix='.pdf')
             
-            time.sleep(0.1)
-
-            # Import processing modules
             try:
-                from pdf_processor.ocr_extractor import OCRExtractor
-                from pdf_processor.data_parser import DataParser
-                from pdf_processor.data_validator import DataValidator
-            except ImportError as ie:
+                with os.fdopen(fd, 'wb') as tmp_file:
+                    file.save(tmp_file)
+                
+                time.sleep(0.1)
+
+                # Import processing modules
+                try:
+                    from pdf_processor.ocr_extractor import OCRExtractor
+                    from pdf_processor.data_parser import DataParser
+                    from pdf_processor.data_validator import DataValidator
+                except ImportError as ie:
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'PDF processing modules not available',
+                        'error': f'Import error: {str(ie)}'
+                    }), 500
+
+                # Process PDF
+                extractor = OCRExtractor()
+                extraction_result = extractor.extract_text_from_pdf(tmp_file_path)
+
+                if not extraction_result['success']:
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'Text extraction failed',
+                        'error': extraction_result['error']
+                    }), 500
+
+                parser = DataParser()
+                parsing_result = parser.parse_text(extraction_result['text'])
+
+                if not parsing_result['success']:
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'Product parsing failed',
+                        'error': parsing_result['error']
+                    }), 500
+
+                validator = DataValidator()
+                cleaned_products = []
+                for product in parsing_result['products']:
+                    cleaned_product = validator.clean_product_data(product)
+                    cleaned_products.append(cleaned_product)
+
+                validation_result = validator.validate_product_batch(cleaned_products)
+
+                return jsonify({
+                    'status': 'success',
+                    'message': f'PDF processed successfully - {len(cleaned_products)} products found',
+                    'filename': file.filename,
+                    'extraction_method': extraction_result['method'],
+                    'page_count': extraction_result.get('page_count', 0),
+                    'products_found': len(cleaned_products),
+                    'products': cleaned_products,
+                    'validation': validation_result
+                })
+
+            except Exception as processing_error:
                 return jsonify({
                     'status': 'error',
-                    'message': 'PDF processing modules not available',
-                    'error': f'Import error: {str(ie)}'
+                    'message': 'PDF processing failed',
+                    'error': str(processing_error)
                 }), 500
 
-            # Process PDF
-            extractor = OCRExtractor()
-            extraction_result = extractor.extract_text_from_pdf(tmp_file_path)
-
-            if not extraction_result['success']:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Text extraction failed',
-                    'error': extraction_result['error']
-                }), 500
-
-            parser = DataParser()
-            parsing_result = parser.parse_text(extraction_result['text'])
-
-            if not parsing_result['success']:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Product parsing failed',
-                    'error': parsing_result['error']
-                }), 500
-
-            validator = DataValidator()
-            cleaned_products = []
-            for product in parsing_result['products']:
-                cleaned_product = validator.clean_product_data(product)
-                cleaned_products.append(cleaned_product)
-
-            validation_result = validator.validate_product_batch(cleaned_products)
-
-            return jsonify({
-                'status': 'success',
-                'message': f'PDF processed successfully - {len(cleaned_products)} products found',
-                'filename': file.filename,
-                'extraction_method': extraction_result['method'],
-                'page_count': extraction_result.get('page_count', 0),
-                'products_found': len(cleaned_products),
-                'products': cleaned_products,
-                'validation': validation_result
-            })
-
-        except Exception as processing_error:
+        else:
             return jsonify({
                 'status': 'error',
-                'message': 'PDF processing failed',
-                'error': str(processing_error)
-            }), 500
+                'message': 'Invalid file type. Please upload a PDF file.'
+            }), 400
 
     except Exception as e:
         return jsonify({
@@ -566,6 +630,7 @@ def upload_pdf():
                         time.sleep(0.2 * (attempt + 1))
 
 @app.route('/api/pdf/upload-async', methods=['POST'])
+@cross_origin()
 def upload_pdf_async():
     """Start async PDF processing"""
     try:
@@ -573,11 +638,11 @@ def upload_pdf_async():
             return jsonify({'status': 'error', 'message': 'No file uploaded'}), 400
 
         file = request.files['file']
-        
-        # Validate file
-        is_valid, error_message = is_valid_pdf_file(file)
-        if not is_valid:
-            return jsonify({'status': 'error', 'message': error_message}), 400
+        if file.filename == '':
+            return jsonify({'status': 'error', 'message': 'No file selected'}), 400
+
+        if not file.filename.lower().endswith('.pdf'):
+            return jsonify({'status': 'error', 'message': 'Invalid file type'}), 400
 
         job_id = async_processor.start_processing(file, file.filename)
         
@@ -593,6 +658,7 @@ def upload_pdf_async():
         return jsonify({'status': 'error', 'message': 'Failed to start processing', 'error': str(e)}), 500
 
 @app.route('/api/pdf/status/<job_id>')
+@cross_origin()
 def get_processing_status(job_id):
     """Get processing status"""
     try:
@@ -601,33 +667,8 @@ def get_processing_status(job_id):
     except Exception as e:
         return jsonify({'status': 'error', 'message': 'Failed to get status', 'error': str(e)}), 500
 
-@app.route('/api/pdf/upload-simple', methods=['POST'])
-def upload_pdf_simple():
-    """Simple PDF upload for testing"""
-    try:
-        if 'file' not in request.files:
-            return jsonify({'status': 'error', 'message': 'No file uploaded'}), 400
-
-        file = request.files['file']
-        
-        # Validate file
-        is_valid, error_message = is_valid_pdf_file(file)
-        if not is_valid:
-            return jsonify({'status': 'error', 'message': error_message}), 400
-
-        return jsonify({
-            'status': 'success',
-            'message': f'PDF {file.filename} uploaded successfully (simplified processing)',
-            'filename': file.filename,
-            'products_found': 0,
-            'products': [],
-            'note': 'Simplified version for testing'
-        })
-
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': 'Simple upload failed', 'error': str(e)}), 500
-
 @app.route('/api/pdf/validate', methods=['POST'])
+@cross_origin()
 def validate_products():
     """Validate product data"""
     try:
@@ -653,7 +694,8 @@ def validate_products():
 
 # ========== COMPARISON AND AUTOMATION ENDPOINTS ==========
 
-@app.route('/api/comparison/compare', methods=['POST'])
+@app.route('/api/comparison/compare', methods=['POST', 'OPTIONS'])
+@cross_origin()
 def compare_products():
     """Compare PDF products with OpenCart inventory"""
     try:
@@ -691,7 +733,46 @@ def compare_products():
     except Exception as e:
         return jsonify({'status': 'error', 'message': 'Comparison failed', 'error': str(e)}), 500
 
+@app.route('/api/comparison/compare-fast', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def compare_products_fast():
+    """Fast comparison - just check a few key products"""
+    try:
+        data = request.get_json()
+        if not data or 'products' not in data:
+            return jsonify({'status': 'error', 'message': 'No product data provided'}), 400
+
+        products = data['products'][:10]  # Only test first 10 products for speed
+        
+        from comparison_engine.product_comparator import ProductComparator
+        comparator = ProductComparator(opencart_client)
+        comparator.search_delay = 0.05  # Fast searches
+        
+        result = comparator.compare_products(products)
+        
+        # Scale up results for demo
+        if result['success']:
+            summary = result['summary']
+            scaled_summary = {
+                'total_pdf_products': len(data['products']),
+                'exact_matches': int(summary['exact_matches'] * (len(data['products']) / 10)),
+                'price_differences': int(summary['price_differences'] * (len(data['products']) / 10)),
+                'missing_products': int(summary['missing_products'] * (len(data['products']) / 10))
+            }
+            result['summary'] = scaled_summary
+            result['note'] = f'Fast comparison - tested {len(products)} of {len(data["products"])} products'
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Fast comparison completed',
+            'comparison': result
+        })
+        
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'Fast comparison failed: {str(e)}'}), 500
+
 @app.route('/api/automation/create_missing', methods=['POST'])
+@cross_origin()
 def create_missing_products():
     """Automatically create missing products in OpenCart"""
     try:
@@ -734,6 +815,7 @@ def create_missing_products():
 # ========== WORKFLOW ENDPOINTS ==========
 
 @app.route('/api/workflow/start', methods=['POST'])
+@cross_origin()
 def start_workflow():
     """Start a complete PDF processing workflow"""
     if not workflow_available:
@@ -748,11 +830,11 @@ def start_workflow():
             return jsonify({'status': 'error', 'message': 'No PDF file uploaded'}), 400
 
         file = request.files['file']
-        
-        # Validate file
-        is_valid, error_message = is_valid_pdf_file(file)
-        if not is_valid:
-            return jsonify({'status': 'error', 'message': error_message}), 400
+        if file.filename == '':
+            return jsonify({'status': 'error', 'message': 'No file selected'}), 400
+
+        if not file.filename.lower().endswith('.pdf'):
+            return jsonify({'status': 'error', 'message': 'Invalid file type. Please upload a PDF file.'}), 400
 
         # Get workflow options from form data
         options = {
@@ -760,7 +842,7 @@ def start_workflow():
             'auto_update_prices': request.form.get('auto_update_prices', 'false').lower() == 'true',
             'validation_threshold': float(request.form.get('validation_threshold', 0.7)),
             'price_tolerance_percent': float(request.form.get('price_tolerance_percent', 5.0)),
-            'batch_size': int(request.form.get('batch_size', 10)),
+             'batch_size': int(request.form.get('batch_size', 10)),
             'dry_run': request.form.get('dry_run', 'false').lower() == 'true'
         }
 
@@ -778,6 +860,7 @@ def start_workflow():
         return jsonify({'status': 'error', 'message': 'Failed to start workflow', 'error': str(e)}), 500
 
 @app.route('/api/workflow/<workflow_id>/status')
+@cross_origin()
 def get_workflow_status(workflow_id):
     """Get workflow status and results"""
     if not workflow_available:
@@ -795,6 +878,7 @@ def get_workflow_status(workflow_id):
         return jsonify({'status': 'error', 'message': 'Failed to get workflow status', 'error': str(e)}), 500
 
 @app.route('/api/workflow/<workflow_id>/summary')
+@cross_origin()
 def get_workflow_summary(workflow_id):
     """Get workflow summary"""
     if not workflow_available:
@@ -812,6 +896,7 @@ def get_workflow_summary(workflow_id):
         return jsonify({'status': 'error', 'message': 'Failed to get workflow summary', 'error': str(e)}), 500
 
 @app.route('/api/workflow/<workflow_id>/cancel', methods=['POST'])
+@cross_origin()
 def cancel_workflow(workflow_id):
     """Cancel a running workflow"""
     if not workflow_available:
@@ -829,6 +914,7 @@ def cancel_workflow(workflow_id):
         return jsonify({'status': 'error', 'message': 'Failed to cancel workflow', 'error': str(e)}), 500
 
 @app.route('/api/workflow/list')
+@cross_origin()
 def list_workflows():
     """List recent workflows"""
     try:
@@ -855,6 +941,21 @@ def list_workflows():
     except Exception as e:
         return jsonify({'status': 'error', 'message': 'Failed to list workflows', 'error': str(e)}), 500
 
+# ========== TEST ENDPOINTS ==========
+
+@app.route('/api/test-cors', methods=['GET', 'POST', 'OPTIONS'])
+@cross_origin()
+def test_cors():
+    """Test CORS functionality"""
+    return jsonify({
+        'status': 'success',
+        'message': 'CORS is working!',
+        'method': request.method,
+        'headers': dict(request.headers),
+        'origin': request.headers.get('Origin', 'No origin header'),
+        'timestamp': datetime.now().isoformat()
+    })
+
 # ========== ERROR HANDLERS ==========
 
 @app.errorhandler(404)
@@ -867,7 +968,9 @@ def not_found(error):
             'GET /',
             'GET /health',
             'GET /api/test',
-            'GET /api/opencart/test'
+            'GET /api/opencart/test',
+            'POST /api/comparison/compare',
+            'POST /api/comparison/compare-fast'
         ]
     }), 404
 
@@ -877,7 +980,7 @@ def method_not_allowed(error):
     return jsonify({
         'status': 'error',
         'message': 'Method not allowed',
-        'allowed_methods': ['GET', 'POST']
+        'allowed_methods': ['GET', 'POST', 'OPTIONS']
     }), 405
 
 @app.errorhandler(500)
@@ -899,6 +1002,7 @@ if __name__ == '__main__':
     print(f"📡 Server running on http://localhost:{port}")
     print(f"🔧 Debug mode: {debug}")
     print(f"🏪 OpenCart URL: {os.getenv('OPENCART_BASE_URL', 'Not configured')}")
+    print("🔄 CORS enabled for all origins (development mode)")
     print("=" * 50)
     
     app.run(
