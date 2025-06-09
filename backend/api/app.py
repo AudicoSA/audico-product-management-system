@@ -232,6 +232,22 @@ except ImportError:
     workflow_manager = None
     workflow_available = False
 
+# ========== UTILITY FUNCTIONS ==========
+
+def is_valid_pdf_file(file):
+    """Check if uploaded file is a valid PDF"""
+    if not file or not file.filename:
+        return False, "No file selected"
+    
+    filename = file.filename.strip()
+    if not filename:
+        return False, "Empty filename"
+    
+    if not filename.lower().endswith('.pdf'):
+        return False, "Invalid file type. Please upload a PDF file."
+    
+    return True, "Valid PDF file"
+
 # ========== BASIC API ENDPOINTS ==========
 
 @app.route('/')
@@ -309,7 +325,7 @@ def api_test():
     ]
 
     return jsonify({
-        "message": "🚀 API is working perfectly!",
+        "message": "🎵 API is working perfectly!",
         "available_endpoints": endpoints,
         "system_status": {
             "pdf_processing": "operational",
@@ -454,86 +470,82 @@ def upload_pdf():
             }), 400
 
         file = request.files['file']
-        if file.filename == '':
-            return jsonify({
-                'status': 'error', 
-                'message': 'No file selected'
-            }), 400
-
-        if file and file.filename.lower().endswith('.pdf'):
-            # Create temporary file
-            fd, tmp_file_path = tempfile.mkstemp(suffix='.pdf')
-            
-            try:
-                with os.fdopen(fd, 'wb') as tmp_file:
-                    file.save(tmp_file)
-                
-                time.sleep(0.1)
-
-                # Import processing modules
-                try:
-                    from pdf_processor.ocr_extractor import OCRExtractor
-                    from pdf_processor.data_parser import DataParser
-                    from pdf_processor.data_validator import DataValidator
-                except ImportError as ie:
-                    return jsonify({
-                        'status': 'error',
-                        'message': 'PDF processing modules not available',
-                        'error': f'Import error: {str(ie)}'
-                    }), 500
-
-                # Process PDF
-                extractor = OCRExtractor()
-                extraction_result = extractor.extract_text_from_pdf(tmp_file_path)
-
-                if not extraction_result['success']:
-                    return jsonify({
-                        'status': 'error',
-                        'message': 'Text extraction failed',
-                        'error': extraction_result['error']
-                    }), 500
-
-                parser = DataParser()
-                parsing_result = parser.parse_text(extraction_result['text'])
-
-                if not parsing_result['success']:
-                    return jsonify({
-                        'status': 'error',
-                        'message': 'Product parsing failed',
-                        'error': parsing_result['error']
-                    }), 500
-
-                validator = DataValidator()
-                cleaned_products = []
-                for product in parsing_result['products']:
-                    cleaned_product = validator.clean_product_data(product)
-                    cleaned_products.append(cleaned_product)
-
-                validation_result = validator.validate_product_batch(cleaned_products)
-
-                return jsonify({
-                    'status': 'success',
-                    'message': f'PDF processed successfully - {len(cleaned_products)} products found',
-                    'filename': file.filename,
-                    'extraction_method': extraction_result['method'],
-                    'page_count': extraction_result.get('page_count', 0),
-                    'products_found': len(cleaned_products),
-                    'products': cleaned_products,
-                    'validation': validation_result
-                })
-
-            except Exception as processing_error:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'PDF processing failed',
-                    'error': str(processing_error)
-                }), 500
-
-        else:
+        
+        # Validate file
+        is_valid, error_message = is_valid_pdf_file(file)
+        if not is_valid:
             return jsonify({
                 'status': 'error',
-                'message': 'Invalid file type. Please upload a PDF file.'
+                'message': error_message
             }), 400
+
+        # Create temporary file
+        fd, tmp_file_path = tempfile.mkstemp(suffix='.pdf')
+        
+        try:
+            with os.fdopen(fd, 'wb') as tmp_file:
+                file.save(tmp_file)
+            
+            time.sleep(0.1)
+
+            # Import processing modules
+            try:
+                from pdf_processor.ocr_extractor import OCRExtractor
+                from pdf_processor.data_parser import DataParser
+                from pdf_processor.data_validator import DataValidator
+            except ImportError as ie:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'PDF processing modules not available',
+                    'error': f'Import error: {str(ie)}'
+                }), 500
+
+            # Process PDF
+            extractor = OCRExtractor()
+            extraction_result = extractor.extract_text_from_pdf(tmp_file_path)
+
+            if not extraction_result['success']:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Text extraction failed',
+                    'error': extraction_result['error']
+                }), 500
+
+            parser = DataParser()
+            parsing_result = parser.parse_text(extraction_result['text'])
+
+            if not parsing_result['success']:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Product parsing failed',
+                    'error': parsing_result['error']
+                }), 500
+
+            validator = DataValidator()
+            cleaned_products = []
+            for product in parsing_result['products']:
+                cleaned_product = validator.clean_product_data(product)
+                cleaned_products.append(cleaned_product)
+
+            validation_result = validator.validate_product_batch(cleaned_products)
+
+            return jsonify({
+                'status': 'success',
+                'message': f'PDF processed successfully - {len(cleaned_products)} products found',
+                'filename': file.filename,
+                'extraction_method': extraction_result['method'],
+                'page_count': extraction_result.get('page_count', 0),
+                'products_found': len(cleaned_products),
+                'products': cleaned_products,
+                'validation': validation_result
+            })
+
+        except Exception as processing_error:
+            return jsonify({
+                'status': 'error',
+                'message': 'PDF processing failed',
+                'error': str(processing_error)
+            }), 500
 
     except Exception as e:
         return jsonify({
@@ -561,11 +573,11 @@ def upload_pdf_async():
             return jsonify({'status': 'error', 'message': 'No file uploaded'}), 400
 
         file = request.files['file']
-        if file.filename == '':
-            return jsonify({'status': 'error', 'message': 'No file selected'}), 400
-
-        if not file.filename.lower().endswith('.pdf'):
-            return jsonify({'status': 'error', 'message': 'Invalid file type'}), 400
+        
+        # Validate file
+        is_valid, error_message = is_valid_pdf_file(file)
+        if not is_valid:
+            return jsonify({'status': 'error', 'message': error_message}), 400
 
         job_id = async_processor.start_processing(file, file.filename)
         
@@ -597,8 +609,11 @@ def upload_pdf_simple():
             return jsonify({'status': 'error', 'message': 'No file uploaded'}), 400
 
         file = request.files['file']
-        if not file.filename.lower().endswith('.pdf'):
-            return jsonify({'status': 'error', 'message': 'Invalid file type'}), 400
+        
+        # Validate file
+        is_valid, error_message = is_valid_pdf_file(file)
+        if not is_valid:
+            return jsonify({'status': 'error', 'message': error_message}), 400
 
         return jsonify({
             'status': 'success',
@@ -733,11 +748,11 @@ def start_workflow():
             return jsonify({'status': 'error', 'message': 'No PDF file uploaded'}), 400
 
         file = request.files['file']
-        if file.filename == '':
-            return jsonify({'status': 'error', 'message': 'No file selected'}), 400
-
-        if not file.filename.lower().endswith('.pdf'):
-            return jsonify({'status': 'error', 'message': 'Invalid file type. Please upload a PDF file.'}), 400
+        
+        # Validate file
+        is_valid, error_message = is_valid_pdf_file(file)
+        if not is_valid:
+            return jsonify({'status': 'error', 'message': error_message}), 400
 
         # Get workflow options from form data
         options = {
@@ -844,6 +859,7 @@ def list_workflows():
 
 @app.errorhandler(404)
 def not_found(error):
+    """Handle 404 errors"""
     return jsonify({
         'status': 'error',
         'message': 'Endpoint not found',
@@ -851,6 +867,43 @@ def not_found(error):
             'GET /',
             'GET /health',
             'GET /api/test',
-            'GET /api/opencart/'
+            'GET /api/opencart/test'
         ]
-    })
+    }), 404
+
+@app.errorhandler(405)
+def method_not_allowed(error):
+    """Handle 405 errors"""
+    return jsonify({
+        'status': 'error',
+        'message': 'Method not allowed',
+        'allowed_methods': ['GET', 'POST']
+    }), 405
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle 500 errors"""
+    return jsonify({
+        'status': 'error',
+        'message': 'Internal server error',
+        'error': str(error)
+    }), 500
+
+# ========== MAIN APPLICATION ==========
+
+if __name__ == '__main__':
+    port = int(os.getenv('FLASK_PORT', 5000))
+    debug = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
+    
+    print("🎵 Starting Audico Product Management System API...")
+    print(f"📡 Server running on http://localhost:{port}")
+    print(f"🔧 Debug mode: {debug}")
+    print(f"🏪 OpenCart URL: {os.getenv('OPENCART_BASE_URL', 'Not configured')}")
+    print("=" * 50)
+    
+    app.run(
+        host='0.0.0.0',
+        port=port,
+        debug=debug,
+        threaded=True
+    )
