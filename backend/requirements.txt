@@ -1,0 +1,26 @@
+# Core Flask dependencies
+Flask==2.3.3
+Flask-CORS==4.0.0
+Werkzeug==2.3.7
+
+# Database connections
+PyMySQL==1.1.0
+mysql-connector-python==8.1.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.25.0
+
+# Environment and utilities
+python-dotenv==1.0.0
+requests==2.31.0
+
+# AI/OpenAI
+openai>=1.0.0
+
+# PDF processing
+PyPDF2>=3.0.1
+
+# Additional utilities
+Pillow>=10.0.0
+openpyxl>=3.1.2

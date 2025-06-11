@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import LiveProductView from './components/LiveProductView' // NEW IMPORT
 import { Box, AppBar, Toolbar, Typography, Drawer, List, ListItem, ListItemIcon, ListItemText, IconButton } from '@mui/material'
-import { Dashboard, UploadFile, Settings, Analytics, Store, Menu as MenuIcon } from '@mui/icons-material'
+import { Dashboard, UploadFile, Settings, Analytics, Store, Menu as MenuIcon, Visibility } from '@mui/icons-material' // Added Visibility icon
 import { AppProvider } from './context/AppContext'
 import DashboardPage from './components/Dashboard/DashboardPage'
 import PDFUploadPage from './components/PDFUpload/PDFUploadPage'
@@ -11,9 +12,11 @@ import AnalyticsPage from './components/Analytics/AnalyticsPage'
 
 const drawerWidth = 240
 
+// UPDATED navigation with Live Product View
 const navigation = [
   { name: 'Dashboard', icon: Dashboard, path: '/' },
   { name: 'PDF Upload', icon: UploadFile, path: '/upload' },
+  { name: 'Live Product View', icon: Visibility, path: '/live-view' }, // NEW MENU ITEM
   { name: 'Workflows', icon: Settings, path: '/workflows' },
   { name: 'OpenCart', icon: Store, path: '/opencart' },
   { name: 'Analytics', icon: Analytics, path: '/analytics' },
@@ -113,6 +116,7 @@ function App() {
             <Routes>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/upload" element={<PDFUploadPage />} />
+              <Route path="/live-view" element={<LiveProductView />} /> {/* NEW ROUTE */}
               <Route path="/workflows" element={<WorkflowManagerPage />} />
               <Route path="/opencart" element={<OpenCartIntegrationPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />

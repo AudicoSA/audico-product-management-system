@@ -19,10 +19,41 @@ load_dotenv()
 # Add path for importing our modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+# Import SqlLantern integration modules
+try:
+    from database_manager import initialize_database, get_database_manager
+    from product_analyzer import ProductStatusAnalyzer, ProductStatus
+    sqlantern_available = True
+    print("✅ SqlLantern integration modules loaded successfully")
+except ImportError as e:
+    sqlantern_available = False
+    print(f"⚠️ SqlLantern integration not available: {e}")
+
 app = Flask(__name__)
 
 # Simple CORS configuration for development
 CORS(app, origins="*", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+
+# Initialize database connection for SqlLantern
+if sqlantern_available:
+    try:
+        initialize_database(
+            host="dedi159.cpt4.host-h.net",
+            username="audicdmyde_314",
+            password="4hG4xcGS3tSgX76o5FSv",
+            database="audicdmyde_db__359",
+            port=3306,
+            prefix="oc_"
+        )
+        analyzer = ProductStatusAnalyzer()
+        print("✅ Database connection initialized successfully")
+    except Exception as e:
+        sqlantern_available = False
+        print(f"⚠️ Database initialization failed: {e}")
+
+# ========== SQLANTERN INTEGRATION VARIABLES ==========
+last_comparison_result = None
+last_update_time = None
 
 # ========== ASYNC PROCESSOR CLASS ==========
 
@@ -244,20 +275,20 @@ class SimpleOpenCartClient:
             if response.status_code == 200:
                 try:
                     data = response.json()
-                    print(f"📊 API Response structure: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                    print(f"📋 API Response structure: {list(data.keys()) if isinstance(data, dict) else type(data)}")
                     
                     # Extract products from the correct location: data.products
                     products = []
                     if data.get('status') and 'data' in data and 'products' in data['data']:
                         products = data['data']['products']
-                        print(f"📦 Found {len(products)} products for search term '{search_term}'")
+                        print(f"✅ Found {len(products)} products for search term '{search_term}'")
                         
                         # Log first product for debugging
                         if products:
                             first_product = products[0]
-                            print(f"📦 First product: {first_product.get('name', 'No name')} (Model: {first_product.get('model', 'No model')})")
+                            print(f"🏷️ First product: {first_product.get('name', 'No name')} (Model: {first_product.get('model', 'No model')})")
                     else:
-                        print(f"⚠️ Unexpected response structure: {data}")
+                        print(f"❌ Unexpected response structure: {data}")
                     
                     return {
                         'success': True,
@@ -269,7 +300,7 @@ class SimpleOpenCartClient:
                     }
                     
                 except Exception as json_error:
-                    print(f"❌ JSON parsing failed: {str(json_error)}")
+                    print(f"💥 JSON parsing failed: {str(json_error)}")
                     return {
                         'success': False,
                         'error': f'JSON parsing failed: {str(json_error)}',
@@ -285,7 +316,7 @@ class SimpleOpenCartClient:
                 }
                 
         except Exception as e:
-            print(f"❌ Search error: {e}")
+            print(f"💥 Search error: {e}")
             return {
                 'success': False,
                 'error': str(e)
@@ -321,34 +352,51 @@ def home():
             "Product comparison engine",
             "Automated product updates",
             "Data validation and cleaning",
-            "Complete workflow orchestration"
-        ]
+            "Complete workflow orchestration",
+            "SqlLantern database integration",
+            "Real-time product status tracking"
+        ],
+        "sqlantern_integration": "enabled" if sqlantern_available else "disabled"
     })
 
 @app.route('/health')
 def health_check():
     """Health check endpoint"""
     try:
+        # Test database connection if SqlLantern is available
+        db_status = "not_available"
+        if sqlantern_available:
+            try:
+                db_manager = get_database_manager()
+                is_connected = db_manager.test_connection()
+                db_status = "connected" if is_connected else "failed"
+            except Exception as e:
+                db_status = f"error: {str(e)}"
+
         return jsonify({
             "status": "healthy",
             "python_version": sys.version,
             "packages": {
                 "flask": "✅ installed",
                 "flask-cors": "✅ installed", 
-                "requests": "✅ installed"
+                "requests": "✅ installed",
+                "pymysql": "✅ installed" if sqlantern_available else "❌ not available",
+                "pandas": "✅ installed" if sqlantern_available else "❌ not available"
             },
             "environment": os.getenv('FLASK_ENV', 'development'),
             "opencart_config": {
                 "base_url": os.getenv('OPENCART_BASE_URL'),
                 "api_configured": bool(os.getenv('OPENCART_BASIC_TOKEN'))
             },
+            "database_status": db_status,
             "modules_available": {
                 "pdf_processing": "✅ ready",
                 "data_validation": "✅ ready",
                 "opencart_integration": "✅ ready",
                 "comparison_engine": "✅ ready",
                 "automation_engine": "✅ ready",
-                "workflow_manager": "✅ ready" if workflow_available else "❌ not available"
+                "workflow_manager": "✅ ready" if workflow_available else "❌ not available",
+                "sqlantern_integration": "✅ ready" if sqlantern_available else "❌ not available"
             }
         })
     except ImportError as e:
@@ -357,6 +405,213 @@ def health_check():
             "error": str(e)
         }), 500
 
+# ========== SQLANTERN INTEGRATION ENDPOINTS ==========
+
+@app.route('/api/health', methods=['GET'])
+def api_health_check():
+    """SqlLantern-style health check endpoint"""
+    if not sqlantern_available:
+        return jsonify({
+            'status': 'error',
+            'message': 'SqlLantern integration not available',
+            'timestamp': datetime.now().isoformat()
+        }), 503
+    
+    try:
+        db_manager = get_database_manager()
+        is_connected = db_manager.test_connection()
+        
+        return jsonify({
+            'status': 'healthy' if is_connected else 'unhealthy',
+            'database_connected': is_connected,
+            'timestamp': datetime.now().isoformat(),
+            'integration': 'sqlantern'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/api/products/opencart', methods=['GET'])
+def get_opencart_products():
+    """Get products from OpenCart database"""
+    if not sqlantern_available:
+        return jsonify({'error': 'SqlLantern integration not available'}), 503
+    
+    try:
+        products = analyzer.get_opencart_products()
+        
+        products_data = []
+        for product in products:
+            products_data.append({
+                'id': product.opencart_id,
+                'sku': product.sku,
+                'name': product.name,
+                'model': product.model,
+                'price': float(product.price),
+                'description': product.description,
+                'manufacturer': product.manufacturer,
+                'status': product.status.value
+            })
+        
+        return jsonify({
+            'products': products_data,
+            'total': len(products_data),
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/products/pricelist', methods=['GET'])
+def get_pricelist_products():
+    """Get products from pricelist (sample data for now)"""
+    if not sqlantern_available:
+        return jsonify({'error': 'SqlLantern integration not available'}), 503
+    
+    try:
+        products = analyzer.create_sample_pricelist_data()
+        
+        products_data = []
+        for product in products:
+            products_data.append({
+                'sku': product.sku,
+                'name': product.name,
+                'model': product.model,
+                'price': float(product.price),
+                'description': product.description,
+                'category': product.category,
+                'manufacturer': product.manufacturer
+            })
+        
+        return jsonify({
+            'products': products_data,
+            'total': len(products_data),
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/products/compare', methods=['GET'])
+def compare_products_sqlantern():
+    """Compare pricelist products with OpenCart products"""
+    global last_comparison_result, last_update_time
+    
+    if not sqlantern_available:
+        return jsonify({'error': 'SqlLantern integration not available'}), 503
+    
+    try:
+        # Use cached result if recent (within 5 minutes)
+        if (last_comparison_result and last_update_time and 
+            (datetime.now() - last_update_time).seconds < 300):
+            return jsonify(last_comparison_result)
+        
+        # Get fresh comparison
+        pricelist_products = analyzer.create_sample_pricelist_data()
+        comparison_result = analyzer.compare_products(pricelist_products)
+        
+        # Format for API response
+        products_data = []
+        for product in comparison_result.products:
+            product_data = {
+                'sku': product.sku,
+                'name': product.name,
+                'model': product.model,
+                'price': float(product.price),
+                'description': product.description,
+                'manufacturer': product.manufacturer,
+                'status': product.status.value,
+                'opencart_id': product.opencart_id
+            }
+            
+            if product.price_difference:
+                product_data['price_difference'] = float(product.price_difference)
+            
+            products_data.append(product_data)
+        
+        result = {
+            'products': products_data,
+            'summary': comparison_result.summary,
+            'total': comparison_result.total_products,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Cache the result
+        last_comparison_result = result
+        last_update_time = datetime.now()
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/products/status/<status>', methods=['GET'])
+def get_products_by_status(status):
+    """Get products filtered by status"""
+    if not sqlantern_available:
+        return jsonify({'error': 'SqlLantern integration not available'}), 503
+    
+    try:
+        pricelist_products = analyzer.create_sample_pricelist_data()
+        comparison_result = analyzer.compare_products(pricelist_products)
+        
+        filtered_products = [
+            p for p in comparison_result.products 
+            if p.status.value == status.lower()
+        ]
+        
+        products_data = []
+        for product in filtered_products:
+            product_data = {
+                'sku': product.sku,
+                'name': product.name,
+                'model': product.model,
+                'price': float(product.price),
+                'description': product.description,
+                'manufacturer': product.manufacturer,
+                'status': product.status.value,
+                'opencart_id': product.opencart_id
+            }
+            
+            if product.price_difference:
+                product_data['price_difference'] = float(product.price_difference)
+            
+            products_data.append(product_data)
+        
+        return jsonify({
+            'products': products_data,
+            'total': len(products_data),
+            'status_filter': status,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/products/summary', methods=['GET'])
+def get_products_summary():
+    """Get summary of product statuses"""
+    if not sqlantern_available:
+        return jsonify({'error': 'SqlLantern integration not available'}), 503
+    
+    try:
+        pricelist_products = analyzer.create_sample_pricelist_data()
+        comparison_result = analyzer.compare_products(pricelist_products)
+        
+        return jsonify({
+            'summary': comparison_result.summary,
+            'total_products': comparison_result.total_products,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ========== EXISTING API ENDPOINTS (UNCHANGED) ==========
+
 @app.route('/api/test')
 def api_test():
     """Test API endpoint"""
@@ -364,6 +619,10 @@ def api_test():
         "GET  / - API home",
         "GET  /health - Health check", 
         "GET  /api/test - API test",
+        "GET  /api/health - SqlLantern health check",
+        "GET  /api/products/compare - SqlLantern product comparison",
+        "GET  /api/products/opencart - Get OpenCart products",
+        "GET  /api/products/summary - Get product status summary",
         "GET  /api/opencart/test - Test OpenCart connection",
         "GET  /api/opencart/products - Get products",
         "GET  /api/opencart/search/<term> - Search products",
@@ -390,11 +649,10 @@ def api_test():
             "data_validation": "operational",
             "product_comparison": "operational",
             "automation_engine": "operational",
-            "workflow_manager": "operational" if workflow_available else "limited"
+            "workflow_manager": "operational" if workflow_available else "limited",
+            "sqlantern_integration": "operational" if sqlantern_available else "disabled"
         }
     })
-
-# ========== OPENCART API ENDPOINTS ==========
 
 @app.route('/api/opencart/test')
 @cross_origin()
@@ -406,14 +664,14 @@ def opencart_test():
         if result['success']:
             return jsonify({
                 "status": "success",
-                "message": "✅ OpenCart API connection working!",
+                "message": "🎵 OpenCart API connection working!",
                 "connection_details": result,
                 "store_url": "https://www.audicoonline.co.za"
             })
         else:
             return jsonify({
                 "status": "error",
-                "message": "❌ OpenCart API connection failed",
+                "message": "🚫 OpenCart API connection failed",
                 "error": result.get('error', 'Unknown error'),
                 "details": result,
                 "troubleshooting": [
@@ -498,7 +756,7 @@ def search_products(search_term):
             "error": str(e)
         }), 500
 
-# ========== PDF PROCESSING ENDPOINTS ==========
+# ========== PDF PROCESSING ENDPOINTS (UNCHANGED) ==========
 
 @app.route('/api/pdf/upload', methods=['GET', 'POST'])
 @cross_origin()
@@ -842,7 +1100,7 @@ def start_workflow():
             'auto_update_prices': request.form.get('auto_update_prices', 'false').lower() == 'true',
             'validation_threshold': float(request.form.get('validation_threshold', 0.7)),
             'price_tolerance_percent': float(request.form.get('price_tolerance_percent', 5.0)),
-             'batch_size': int(request.form.get('batch_size', 10)),
+            'batch_size': int(request.form.get('batch_size', 10)),
             'dry_run': request.form.get('dry_run', 'false').lower() == 'true'
         }
 
@@ -968,6 +1226,8 @@ def not_found(error):
             'GET /',
             'GET /health',
             'GET /api/test',
+            'GET /api/health - SqlLantern health',
+            'GET /api/products/compare - SqlLantern comparison',
             'GET /api/opencart/test',
             'POST /api/comparison/compare',
             'POST /api/comparison/compare-fast'
@@ -999,10 +1259,16 @@ if __name__ == '__main__':
     debug = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
     
     print("🎵 Starting Audico Product Management System API...")
-    print(f"📡 Server running on http://localhost:{port}")
+    print(f"🌐 Server running on http://localhost:{port}")
     print(f"🔧 Debug mode: {debug}")
     print(f"🏪 OpenCart URL: {os.getenv('OPENCART_BASE_URL', 'Not configured')}")
-    print("🔄 CORS enabled for all origins (development mode)")
+    print("🌍 CORS enabled for all origins (development mode)")
+    if sqlantern_available:
+        print("🗄️ SqlLantern integration: ✅ ENABLED")
+        print("📊 Live Product View: ✅ AVAILABLE")
+    else:
+        print("🗄️ SqlLantern integration: ❌ DISABLED")
+        print("📊 Live Product View: ❌ NOT AVAILABLE")
     print("=" * 50)
     
     app.run(
